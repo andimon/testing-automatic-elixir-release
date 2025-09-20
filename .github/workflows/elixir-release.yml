@@ -141,6 +141,9 @@ jobs:
   # Security scanning
   security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # Add this permission
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
