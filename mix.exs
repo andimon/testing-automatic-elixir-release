@@ -5,15 +5,14 @@ defmodule TestingAutomaticElixirRelease.MixProject do
     [
       app: :testing_automatic_elixir_release,
       version: "0.0.1",
-      elixir: "~> 1.18",
+      elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
 
       description: "A package that is used in the testing of an automatic Elixir pipeline",
       package: package(),
 
-      source_url: "https://github.com/andimon/testing-automatic-elixir-release",
-      docs: docs()
+      source_url: "https://github.com/andimon/testing-automatic-elixir-release"
     ]
   end
 
