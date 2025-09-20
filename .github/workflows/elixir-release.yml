@@ -140,7 +140,7 @@ jobs:
 
   # Security scanning
   security:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       security-events: write  # Add this permission
@@ -163,7 +163,7 @@ jobs:
 
   # Build, test, and analyze Elixir package
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, security]
     strategy:
       matrix:
@@ -281,7 +281,7 @@ jobs:
 
   # Update mix.exs version and create tags
   update-version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, build-and-test]
     if: needs.version.outputs.should_release == 'true'
     permissions:
@@ -322,7 +322,7 @@ jobs:
 
   # Create Git tags for all successful builds
   tag:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, build-and-test, update-version]
     if: github.event_name == 'push' && needs.build-and-test.result == 'success'
     permissions:
@@ -383,7 +383,7 @@ jobs:
 
   # Publish to Hex.pm (conditional)
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, build-and-test, update-version, tag]
     if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && vars.PUBLISH_TO_HEX == 'true'
     permissions:
@@ -439,7 +439,7 @@ jobs:
 
   # Deploy documentation to GitHub Pages
   deploy-docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, build-and-test]
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     permissions:
@@ -470,7 +470,7 @@ jobs:
 
   # Create release and update changelog
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, build-and-test, update-version, tag, publish, deploy-docs]
     if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     permissions:
@@ -565,7 +565,7 @@ jobs:
 
   # Notify on completion
   notify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [version, build-and-test, update-version, tag, publish, deploy-docs, release]
     if: always()
     steps:
