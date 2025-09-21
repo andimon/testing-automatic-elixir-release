@@ -21,7 +21,7 @@ on:
 env:
   MIX_ENV: test
   ELIXIR_VERSION: "1.15"
-  OTP_VERSION: "26"
+  OTP_VERSION: "26.2.5"  # Fixed: Use specific patch version for ubuntu-22.04
 
 jobs:
   # Determine semantic version and release type
@@ -258,21 +258,21 @@ jobs:
 
       - name: Build Hex package
         id: package
-        if: matrix.elixir == '1.15' && matrix.otp == '26'  # Fixed: Updated condition to match matrix
+        if: matrix.elixir == '1.15' && matrix.otp == '26.2.5'  # Fixed: Updated condition to match matrix
         run: |
           mix hex.build
           PACKAGE_NAME=$(ls *.tar | head -1)
           echo "package-name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
 
       - name: Upload package artifact
-        if: matrix.elixir == '1.15' && matrix.otp == '26'  # Fixed: Updated condition to match matrix
+        if: matrix.elixir == '1.15' && matrix.otp == '26.2.5'  # Fixed: Updated condition to match matrix
         uses: actions/upload-artifact@v4
         with:
           name: hex-package
           path: "*.tar"
 
       - name: Upload documentation artifact
-        if: matrix.elixir == '1.15' && matrix.otp == '26'  # Fixed: Updated condition to match matrix
+        if: matrix.elixir == '1.15' && matrix.otp == '26.2.5'  # Fixed: Updated condition to match matrix
         uses: actions/upload-artifact@v4
         with:
           name: documentation
