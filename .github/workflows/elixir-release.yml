@@ -490,10 +490,89 @@ jobs:
           git push origin "$TAG_NAME"
           echo "Created tag: $TAG_NAME"
 
+  # Create manual changelog
+  changelog:
+    runs-on: ubuntu-22.04
+    needs: [version, build-and-test, tag]
+    if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.ref_name }}
+
+      - name: Generate changelog
+        run: |
+          echo "=== CHANGELOG GENERATION ==="
+          VERSION="${{ needs.version.outputs.next_version }}"
+          DATE=$(date +%Y-%m-%d)
+          
+          echo "Creating changelog for version: $VERSION"
+          
+          # Create or update CHANGELOG.md
+          if [ ! -f CHANGELOG.md ]; then
+            echo "Creating new CHANGELOG.md"
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "Last tag: ${LAST_TAG:-none}"
+          
+          if [ -n "$LAST_TAG" ]; then
+            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline --grep="^feat\|^fix\|^perf\|^refactor" --pretty=format:"- %s (%h)" || echo "")
+          else
+            COMMITS=$(git log --oneline --grep="^feat\|^fix\|^perf\|^refactor" --pretty=format:"- %s (%h)" || echo "")
+          fi
+          
+          echo "Found commits:"
+          echo "$COMMITS"
+          
+          # Insert new version at top of changelog
+          {
+            echo "# Changelog"
+            echo ""
+            echo "## [$VERSION] - $DATE"
+            echo ""
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS"
+            else
+              echo "- Release $VERSION"
+            fi
+            echo ""
+            tail -n +3 CHANGELOG.md 2>/dev/null || true
+          } > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          
+          echo "Updated CHANGELOG.md"
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet CHANGELOG.md; then
+            echo "No changes to CHANGELOG.md"
+          else
+            echo "Committing changelog changes"
+            git add CHANGELOG.md
+            git commit -m "docs: update changelog for ${{ needs.version.outputs.next_version }} [skip ci]"
+            git push origin ${{ github.ref_name }}
+            echo "Changelog committed and pushed"
+          fi
+
   # Publish to Hex.pm (conditional)
   publish:
     runs-on: ubuntu-22.04
-    needs: [version, build-and-test, tag]
+    needs: [version, build-and-test, tag, changelog]
     if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && vars.PUBLISH_TO_HEX == 'true'
     permissions:
       contents: write
@@ -574,10 +653,130 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
+  # Create manual changelog if semantic-release fails
+  manual-changelog:
+    runs-on: ubuntu-22.04
+    needs: [version, build-and-test, tag]
+    if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.ref_name }}
+
+      - name: Generate changelog manually
+        run: |
+          echo "=== CHANGELOG DEBUG ==="
+          echo "Version: ${{ needs.version.outputs.next_version }}"
+          echo "Should release: ${{ needs.version.outputs.should_release }}"
+          echo "Current branch: ${{ github.ref_name }}"
+          echo "Working directory: $(pwd)"
+          echo "Git status before:"
+          git status
+          echo "========================"
+          
+          VERSION="${{ needs.version.outputs.next_version }}"
+          TAG="${{ needs.version.outputs.tag }}"
+          DATE=$(date +%Y-%m-%d)
+          
+          echo "Checking for existing CHANGELOG.md..."
+          # Create or update CHANGELOG.md
+          if [ ! -f CHANGELOG.md ]; then
+            echo "Creating new CHANGELOG.md"
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          else
+            echo "CHANGELOG.md already exists"
+            echo "Current content:"
+            head -10 CHANGELOG.md
+          fi
+          
+          # Get commits since last tag
+          echo "Finding commits since last tag..."
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "Last tag: ${LAST_TAG:-none}"
+          
+          if [ -n "$LAST_TAG" ]; then
+            echo "Getting commits since $LAST_TAG..."
+            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline --grep="^feat\|^fix\|^perf\|^refactor" --pretty=format:"- %s (%h)" || echo "")
+          else
+            echo "No previous tags, getting all commits..."
+            COMMITS=$(git log --oneline --grep="^feat\|^fix\|^perf\|^refactor" --pretty=format:"- %s (%h)" || echo "")
+          fi
+          
+          echo "Found commits:"
+          echo "$COMMITS"
+          
+          # Insert new version at top
+          echo "Updating CHANGELOG.md..."
+          {
+            echo "# Changelog"
+            echo ""
+            echo "## [$VERSION] - $DATE"
+            echo ""
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS"
+            else
+              echo "- Release $VERSION"
+            fi
+            echo ""
+            tail -n +3 CHANGELOG.md 2>/dev/null || true
+          } > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          
+          echo "Updated CHANGELOG.md content:"
+          head -15 CHANGELOG.md
+          
+          echo "Git status after:"
+          git status
+
+      - name: Commit changelog
+        run: |
+          echo "=== COMMIT DEBUG ==="
+          echo "Configuring git..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          echo "Checking for changes..."
+          if git diff --quiet CHANGELOG.md; then
+            echo "No changes to CHANGELOG.md detected"
+          else
+            echo "Changes detected in CHANGELOG.md:"
+            git diff CHANGELOG.md
+            
+            echo "Adding CHANGELOG.md..."
+            git add CHANGELOG.md
+            
+            echo "Committing changes..."
+            if git commit -m "docs: update changelog for ${{ needs.version.outputs.next_version }} [skip ci]"; then
+              echo "Commit successful"
+              
+              echo "Pushing changes..."
+              if git push origin ${{ github.ref_name }}; then
+                echo "Push successful"
+              else
+                echo "Push failed with exit code: $?"
+                echo "Git remote info:"
+                git remote -v
+                echo "Current branch:"
+                git branch -a
+              fi
+            else
+              echo "Commit failed with exit code: $?"
+            fi
+          fi
+
   # Create GitHub release with full semantic-release
   release:
     runs-on: ubuntu-22.04
-    needs: [version, build-and-test, tag, publish, deploy-docs]
+    needs: [version, build-and-test, tag, publish, deploy-docs, manual-changelog]
     if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     permissions:
       contents: write
@@ -661,7 +860,7 @@ jobs:
   # Notify on completion
   notify:
     runs-on: ubuntu-22.04
-    needs: [version, build-and-test, tag, publish, deploy-docs, release]
+    needs: [version, build-and-test, tag, publish, deploy-docs, manual-changelog, release]
     if: always()
     steps:
       - name: Workflow summary
