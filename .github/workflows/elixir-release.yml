@@ -254,6 +254,7 @@ jobs:
 
       - name: Generate documentation
         run: |
+          mix deps.get
           mix docs
 
       - name: Build Hex package
