@@ -168,7 +168,7 @@ jobs:
     strategy:
       matrix:
         elixir: ['1.15']
-        otp: ['25']
+        otp: ['26']
         exclude:
           # Exclude incompatible combinations
           - elixir: '1.14'
