@@ -27,6 +27,11 @@ jobs:
   # Determine next version using semantic-release
   version:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+      pull-requests: read
     outputs:
       current_version: ${{ steps.current.outputs.version }}
       next_version: ${{ steps.semantic.outputs.version }}
