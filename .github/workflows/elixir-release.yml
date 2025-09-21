@@ -167,7 +167,7 @@ jobs:
     strategy:
       matrix:
         elixir: ['1.15']
-        otp: ['26']  # Fixed: Changed from '25' to '26' to match env
+        otp: ['26.2.5']  # Fixed: Changed from '25' to '26' to match env
         exclude:
           # Updated exclusion rules for correct version combinations
           - elixir: '1.14'
