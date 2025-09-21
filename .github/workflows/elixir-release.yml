@@ -32,6 +32,7 @@ jobs:
       next_version: ${{ steps.semantic.outputs.version }}
       should_release: ${{ steps.semantic.outputs.should_release }}
       is_prerelease: ${{ steps.semantic.outputs.is_prerelease }}
+      is_initial_release: ${{ steps.semantic.outputs.is_initial_release }}
       tag: ${{ steps.semantic.outputs.tag }}
       release_notes: ${{ steps.semantic.outputs.release_notes }}
     steps:
@@ -61,7 +62,7 @@ jobs:
 
       - name: Install semantic-release
         run: |
-          npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github conventional-changelog-conventionalcommits
+          npm install -g semantic-release@21.1.2 @semantic-release/changelog@6.0.3 @semantic-release/git@10.0.1 @semantic-release/github@9.2.1 conventional-changelog-conventionalcommits@6.1.0
 
       - name: Configure semantic-release (dry-run mode)
         run: |
@@ -113,20 +114,87 @@ jobs:
       - name: Get next version from semantic-release
         id: semantic
         run: |
+          # Removed set -e to see all errors
+          set -x  # Enable command tracing for debugging
+          
+          echo "=== DEBUG: Starting version determination ==="
+          echo "GitHub ref: ${{ github.ref }}"
+          echo "GitHub event: ${{ github.event_name }}"
+          echo "Current working directory: $(pwd)"
+          echo "Git status:"
+          git status
+          echo "Git log (last 5 commits):"
+          git log --oneline -5
+          echo "=== END DEBUG INFO ==="
+          
           if [ "${{ github.ref }}" = "refs/heads/master" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
             if [ "${{ github.event_name }}" = "push" ]; then
               echo "should_release=true" >> $GITHUB_OUTPUT
               echo "is_prerelease=false" >> $GITHUB_OUTPUT
               
               # Run semantic-release in dry-run mode to get next version
-              SEMANTIC_OUTPUT=$(semantic-release --dry-run 2>&1)
+              echo "Running semantic-release dry-run..."
+              
+              # Capture both stdout and stderr, handle errors gracefully
+              SEMANTIC_OUTPUT=""
+              SEMANTIC_EXIT_CODE=0
+              
+              if command -v semantic-release >/dev/null 2>&1; then
+                SEMANTIC_OUTPUT=$(semantic-release --dry-run 2>&1) || SEMANTIC_EXIT_CODE=$?
+              else
+                echo "ERROR: semantic-release command not found"
+                SEMANTIC_EXIT_CODE=1
+              fi
+              
+              echo "Semantic-release exit code: $SEMANTIC_EXIT_CODE"
               echo "Semantic-release output:"
               echo "$SEMANTIC_OUTPUT"
               
+              # Try to extract version from output
               NEXT_VERSION=$(echo "$SEMANTIC_OUTPUT" | grep -oP 'The next release version is \K[^\s]+' || echo "")
               
-              if [ -z "$NEXT_VERSION" ]; then
-                echo "No new version determined by semantic-release"
+              if [ -z "$NEXT_VERSION" ] || [ $SEMANTIC_EXIT_CODE -ne 0 ]; then
+                echo "No new version determined by semantic-release or semantic-release failed"
+                echo "This might be because:"
+                echo "1. No commits since last release warrant a version bump"
+                echo "2. No conventional commits found"
+                echo "3. All recent commits are chore/docs/ci type"
+                
+                # Check if there are existing releases/tags
+                LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+                COMMITS_SINCE_TAG=0
+                
+                if [ -n "$LATEST_TAG" ]; then
+                  # There are existing tags, check commits since last tag
+                  COMMITS_SINCE_TAG=$(git rev-list --count ${LATEST_TAG}..HEAD 2>/dev/null || echo "0")
+                  echo "Latest tag: $LATEST_TAG"
+                  echo "Commits since latest tag: $COMMITS_SINCE_TAG"
+                else
+                  # No tags exist, count all commits
+                  COMMITS_SINCE_TAG=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+                  echo "No existing tags found"
+                  echo "Total commits: $COMMITS_SINCE_TAG"
+                fi
+                
+                CURRENT_VERSION="${{ steps.current.outputs.version }}"
+                
+                # If there are commits but semantic-release didn't bump version,
+                # it means no conventional commits warrant a release
+                if [ "$COMMITS_SINCE_TAG" -gt 0 ]; then
+                  echo "There are $COMMITS_SINCE_TAG unreleased commits, but none warrant a version bump"
+                  echo "Recent commits that don't trigger releases typically include:"
+                  echo "- chore: maintenance tasks"
+                  echo "- docs: documentation updates"  
+                  echo "- ci: workflow changes"
+                  echo "- style: formatting changes"
+                  echo ""
+                  echo "To trigger a release, use conventional commits like:"
+                  echo "- feat: new feature (minor bump)"
+                  echo "- fix: bug fix (patch bump)"
+                  echo "- feat!: breaking change (major bump)"
+                fi
+                
+                echo "No release needed - keeping current version"
                 echo "version=${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
                 echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
                 echo "should_release=false" >> $GITHUB_OUTPUT
@@ -134,14 +202,16 @@ jobs:
                 echo "Next version determined: ${NEXT_VERSION}"
                 echo "version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
                 echo "tag=v${NEXT_VERSION}" >> $GITHUB_OUTPUT
+                echo "should_release=true" >> $GITHUB_OUTPUT
                 
                 # Extract release notes
-                RELEASE_NOTES=$(echo "$SEMANTIC_OUTPUT" | sed -n '/# [0-9]/,/^$/p' | head -n -1)
+                RELEASE_NOTES=$(echo "$SEMANTIC_OUTPUT" | sed -n '/# [0-9]/,/^$/p' | head -n -1 || echo "Release $NEXT_VERSION")
                 echo "release_notes<<EOF" >> $GITHUB_OUTPUT
                 echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
                 echo "EOF" >> $GITHUB_OUTPUT
               fi
             else
+              echo "Not a push event, skipping release"
               echo "should_release=false" >> $GITHUB_OUTPUT
               echo "version=${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
               echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
@@ -171,6 +241,7 @@ jobs:
               echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
             fi
           else
+            echo "Branch not configured for releases"
             echo "should_release=false" >> $GITHUB_OUTPUT
             echo "version=${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
             echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
