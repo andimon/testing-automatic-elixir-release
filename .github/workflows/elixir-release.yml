@@ -256,6 +256,8 @@ jobs:
         run: |
           mix deps.get
           mix docs
+        env:
+          MIX_ENV: dev
 
       - name: Build Hex package
         id: package
