@@ -8,10 +8,8 @@ defmodule TestingAutomaticElixirRelease.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-
       description: "A package that is used in the testing of an automatic Elixir pipeline",
       package: package(),
-
       source_url: "https://github.com/andimon/testing-automatic-elixir-release"
     ]
   end
@@ -32,13 +30,12 @@ defmodule TestingAutomaticElixirRelease.MixProject do
     ]
   end
 
-
   defp package do
     [
       # These are required
       description: "Testing GitFlow setup",
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/andimon/testing-automatic-elixir-release"},
+      links: %{"GitHub" => "https://github.com/andimon/testing-automatic-elixir-release"}
 
       # Optional but recommended
       # maintainers: ["Andre Vella"],
