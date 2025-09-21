@@ -167,8 +167,8 @@ jobs:
     needs: [version, security]
     strategy:
       matrix:
-        elixir: ['1.14', '1.15', '1.16']
-        otp: ['26']
+        elixir: ['1.15']
+        otp: ['25']
         exclude:
           # Exclude incompatible combinations
           - elixir: '1.14'
