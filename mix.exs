@@ -4,7 +4,7 @@ defmodule TestingAutomaticElixirReleaseTwo.MixProject do
   def project do
     [
       app: :testing_automatic_elixir_release_two,
-      version: "0.0.1",
+      version: "0.0.1-beta.5f38eb1",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
