@@ -1,9 +1,9 @@
-defmodule TestingAutomaticElixirRelease.MixProject do
+defmodule TestingAutomaticElixirReleaseTwo.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :testing_automatic_elixir_release,
+      app: :testing_automatic_elixir_release_two,
       version: "0.1.2",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,

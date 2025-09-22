@@ -1,6 +1,6 @@
-defmodule TestingAutomaticElixirRelease do
+defmodule TestingAutomaticElixirReleaseTwo do
   @moduledoc """
-  Documentation for `TestingAutomaticElixirRelease`.
+  Documentation for `TestingAutomaticElixirReleaseTwo`.
   """
 
   @doc """
@@ -8,7 +8,7 @@ defmodule TestingAutomaticElixirRelease do
 
   ## Examples
 
-      iex> TestingAutomaticElixirRelease.hello()
+      iex> TestingAutomaticElixirReleaseTwo.hello()
       :world
 
   """

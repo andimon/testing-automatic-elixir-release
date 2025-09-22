@@ -1,8 +1,8 @@
-defmodule TestingAutomaticElixirReleaseTest do
+defmodule TestingAutomaticElixirReleaseTwoTest do
   use ExUnit.Case
-  doctest TestingAutomaticElixirRelease
+  doctest TestingAutomaticElixirReleaseTwo
 
   test "greets the world" do
-    assert TestingAutomaticElixirRelease.hello() == :world
+    assert TestingAutomaticElixirReleaseTwo.hello() == :world
   end
 end
