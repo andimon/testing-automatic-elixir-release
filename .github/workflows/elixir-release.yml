@@ -37,13 +37,21 @@ jobs:
       next_version: ${{ steps.semantic.outputs.version }}
       should_release: ${{ steps.semantic.outputs.should_release }}
       is_prerelease: ${{ steps.semantic.outputs.is_prerelease }}
+      is_initial_release: ${{ steps.semantic.outputs.is_initial_release }}
       tag: ${{ steps.semantic.outputs.tag }}
+      release_notes: ${{ steps.semantic.outputs.release_notes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
 
       - name: Get current version from mix.exs
         id: current
@@ -113,25 +121,92 @@ jobs:
         run: |
           set -x
           
+          echo "=== DEBUG: Starting version determination ==="
+          echo "GitHub ref: ${{ github.ref }}"
+          echo "GitHub event: ${{ github.event_name }}"
+          echo "Current working directory: $(pwd)"
+          echo "Git status:"
+          git status
+          echo "Git log (last 5 commits):"
+          git log --oneline -5
+          echo "=== END DEBUG INFO ==="
+          
           if [ "${{ github.ref }}" = "refs/heads/master" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
             if [ "${{ github.event_name }}" = "push" ]; then
               echo "should_release=true" >> $GITHUB_OUTPUT
               echo "is_prerelease=false" >> $GITHUB_OUTPUT
               
-              # Run semantic-release in dry-run mode to get next version
-              SEMANTIC_OUTPUT=$(semantic-release --dry-run 2>&1) || true
+              echo "Running semantic-release dry-run..."
+              
+              SEMANTIC_OUTPUT=""
+              SEMANTIC_EXIT_CODE=0
+              
+              if command -v semantic-release >/dev/null 2>&1; then
+                SEMANTIC_OUTPUT=$(semantic-release --dry-run 2>&1) || SEMANTIC_EXIT_CODE=$?
+              else
+                echo "ERROR: semantic-release command not found"
+                SEMANTIC_EXIT_CODE=1
+              fi
+              
+              echo "Semantic-release exit code: $SEMANTIC_EXIT_CODE"
+              echo "Semantic-release output:"
+              echo "$SEMANTIC_OUTPUT"
+              
               NEXT_VERSION=$(echo "$SEMANTIC_OUTPUT" | grep -oP 'The next release version is \K[^\s]+' || echo "")
               
-              if [ -n "$NEXT_VERSION" ]; then
-                echo "version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
-                echo "tag=v${NEXT_VERSION}" >> $GITHUB_OUTPUT
-              else
+              if [ -z "$NEXT_VERSION" ] || [ $SEMANTIC_EXIT_CODE -ne 0 ]; then
+                echo "No new version determined by semantic-release or semantic-release failed"
+                echo "This might be because:"
+                echo "1. No commits since last release warrant a version bump"
+                echo "2. No conventional commits found"
+                echo "3. All recent commits are chore/docs/ci type"
+                
+                LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+                COMMITS_SINCE_TAG=0
+                
+                if [ -n "$LATEST_TAG" ]; then
+                  COMMITS_SINCE_TAG=$(git rev-list --count ${LATEST_TAG}..HEAD 2>/dev/null || echo "0")
+                  echo "Latest tag: $LATEST_TAG"
+                  echo "Commits since latest tag: $COMMITS_SINCE_TAG"
+                else
+                  COMMITS_SINCE_TAG=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+                  echo "No existing tags found"
+                  echo "Total commits: $COMMITS_SINCE_TAG"
+                fi
+                
+                CURRENT_VERSION="${{ steps.current.outputs.version }}"
+                
+                if [ "$COMMITS_SINCE_TAG" -gt 0 ]; then
+                  echo "There are $COMMITS_SINCE_TAG unreleased commits, but none warrant a version bump"
+                  echo "Recent commits that don't trigger releases typically include:"
+                  echo "- chore: maintenance tasks"
+                  echo "- docs: documentation updates"  
+                  echo "- ci: workflow changes"
+                  echo "- style: formatting changes"
+                  echo ""
+                  echo "To trigger a release, use conventional commits like:"
+                  echo "- feat: new feature (minor bump)"
+                  echo "- fix: bug fix (patch bump)"
+                  echo "- feat!: breaking change (major bump)"
+                fi
+                
                 echo "No release needed - keeping current version"
                 echo "version=${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
                 echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
                 echo "should_release=false" >> $GITHUB_OUTPUT
+              else
+                echo "Next version determined: ${NEXT_VERSION}"
+                echo "version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+                echo "tag=v${NEXT_VERSION}" >> $GITHUB_OUTPUT
+                echo "should_release=true" >> $GITHUB_OUTPUT
+                
+                RELEASE_NOTES=$(echo "$SEMANTIC_OUTPUT" | sed -n '/# [0-9]/,/^$/p' | head -n -1 || echo "Release $NEXT_VERSION")
+                echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+                echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
+                echo "EOF" >> $GITHUB_OUTPUT
               fi
             else
+              echo "Not a push event, skipping release"
               echo "should_release=false" >> $GITHUB_OUTPUT
               echo "version=${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
               echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
@@ -160,6 +235,7 @@ jobs:
               echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
             fi
           else
+            echo "Branch not configured for releases"
             echo "should_release=false" >> $GITHUB_OUTPUT
             echo "version=${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
             echo "tag=v${{ steps.current.outputs.version }}" >> $GITHUB_OUTPUT
@@ -177,7 +253,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Trivy vulnerability scanner
+      - name: Run Trivy vulnerability scanner in repo mode
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
@@ -185,16 +261,16 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
 
-      - name: Upload Trivy scan results
+      - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # Update version in mix.exs
+  # Update version in mix.exs (only for main/master releases)
   update-version:
     runs-on: ubuntu-22.04
     needs: [version]
-    if: needs.version.outputs.should_release == 'true' && needs.version.outputs.current_version != needs.version.outputs.next_version
+    if: needs.version.outputs.should_release == 'true' && needs.version.outputs.current_version != needs.version.outputs.next_version && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && needs.version.outputs.is_prerelease != 'true'
     permissions:
       contents: write
     outputs:
@@ -214,16 +290,15 @@ jobs:
           
           echo "Updating version from ${CURRENT_VERSION} to ${NEW_VERSION}"
           
-          # Update version in mix.exs
           sed -i "s/version: \"${CURRENT_VERSION}\"/version: \"${NEW_VERSION}\"/" mix.exs
           
-          # Verify the update
           UPDATED_VERSION=$(grep -o 'version: "[^"]*"' mix.exs | cut -d'"' -f2)
           if [ "$UPDATED_VERSION" != "$NEW_VERSION" ]; then
             echo "Version update failed. Expected: $NEW_VERSION, Got: $UPDATED_VERSION"
             exit 1
           fi
           
+          echo "Version successfully updated to: $UPDATED_VERSION"
           echo "updated=true" >> $GITHUB_OUTPUT
 
       - name: Commit version update
@@ -251,6 +326,7 @@ jobs:
 
     outputs:
       coverage-report: ${{ steps.test.outputs.coverage }}
+      hex-package: ${{ steps.package.outputs.package-name }}
     
     steps:
       - name: Checkout repository
@@ -286,6 +362,12 @@ jobs:
           mix local.rebar --force
           mix deps.get
 
+      - name: Verify version
+        run: |
+          CURRENT_VERSION=$(grep -o 'version: "[^"]*"' mix.exs | cut -d'"' -f2)
+          echo "Current version in mix.exs: ${CURRENT_VERSION}"
+          echo "Expected version: ${{ needs.version.outputs.next_version }}"
+
       - name: Check formatting
         run: mix format --check-formatted
 
@@ -319,8 +401,12 @@ jobs:
           MIX_ENV: dev
 
       - name: Build Hex package
+        id: package
         if: matrix.elixir == '1.15' && matrix.otp == '26.2.5'
-        run: mix hex.build
+        run: |
+          mix hex.build
+          PACKAGE_NAME=$(ls *.tar | head -1)
+          echo "package-name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
 
       - name: Upload package artifact
         if: matrix.elixir == '1.15' && matrix.otp == '26.2.5'
@@ -357,22 +443,21 @@ jobs:
         run: |
           TAG_NAME="${{ needs.version.outputs.tag }}"
           VERSION="${{ needs.version.outputs.next_version }}"
+          BRANCH_NAME="${{ github.ref_name }}"
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Check if tag already exists
           if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
             echo "Tag $TAG_NAME already exists, skipping tag creation"
             exit 0
           fi
           
-          # Create tag
           git tag -a "$TAG_NAME" -m "Release $VERSION"
           git push origin "$TAG_NAME"
           echo "Created tag: $TAG_NAME"
 
-  # Generate changelog
+  # Create manual changelog
   changelog:
     runs-on: ubuntu-22.04
     needs: [version, build-and-test, tag]
@@ -391,26 +476,29 @@ jobs:
 
       - name: Generate changelog
         run: |
+          echo "=== CHANGELOG GENERATION ==="
           VERSION="${{ needs.version.outputs.next_version }}"
           DATE=$(date +%Y-%m-%d)
           
-          # Create or update CHANGELOG.md
+          echo "Creating Keep a Changelog format for version: $VERSION"
+          
           if [ ! -f CHANGELOG.md ]; then
+            echo "Creating new CHANGELOG.md"
             cat > CHANGELOG.md << 'EOF'
           # Changelog
-          
+
           All notable changes to this project will be documented in this file.
-          
+
           The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
           and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-          
+
           ## [Unreleased]
-          
+
           EOF
           fi
           
-          # Get commits since last tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "Last tag: ${LAST_TAG:-none}"
           
           if [ -n "$LAST_TAG" ]; then
             RANGE="${LAST_TAG}..HEAD"
@@ -418,53 +506,79 @@ jobs:
             RANGE="HEAD"
           fi
           
-          # Extract commits by type
           ADDED=$(git log $RANGE --oneline --grep="^feat" --pretty=format:"- %s" | sed 's/^feat[^:]*: /- /' || echo "")
           CHANGED=$(git log $RANGE --oneline --grep="^refactor\|^perf" --pretty=format:"- %s" | sed 's/^[^:]*: /- /' || echo "")
+          DEPRECATED=$(git log $RANGE --oneline --grep="^deprecate" --pretty=format:"- %s" | sed 's/^[^:]*: /- /' || echo "")
+          REMOVED=$(git log $RANGE --oneline --grep="^remove" --pretty=format:"- %s" | sed 's/^[^:]*: /- /' || echo "")
           FIXED=$(git log $RANGE --oneline --grep="^fix" --pretty=format:"- %s" | sed 's/^fix[^:]*: /- /' || echo "")
+          SECURITY=$(git log $RANGE --oneline --grep="security\|^sec" --pretty=format:"- %s" | sed 's/^[^:]*: /- /' || echo "")
           
-          # Create new version entry
+          echo "Found changes:"
+          echo "Added: $ADDED"
+          echo "Changed: $CHANGED" 
+          echo "Fixed: $FIXED"
+          echo "Security: $SECURITY"
+          
           NEW_ENTRY="## [$VERSION] - $DATE"
+          NEW_ENTRY="${NEW_ENTRY}\n"
           
           if [ -n "$ADDED" ]; then
-            NEW_ENTRY="${NEW_ENTRY}
-
-          ### Added
-          ${ADDED}"
+            NEW_ENTRY="${NEW_ENTRY}\n### Added\n$ADDED\n"
           fi
           
           if [ -n "$CHANGED" ]; then
-            NEW_ENTRY="${NEW_ENTRY}
-
-          ### Changed
-          ${CHANGED}"
+            NEW_ENTRY="${NEW_ENTRY}\n### Changed\n$CHANGED\n"
+          fi
+          
+          if [ -n "$DEPRECATED" ]; then
+            NEW_ENTRY="${NEW_ENTRY}\n### Deprecated\n$DEPRECATED\n"
+          fi
+          
+          if [ -n "$REMOVED" ]; then
+            NEW_ENTRY="${NEW_ENTRY}\n### Removed\n$REMOVED\n"
           fi
           
           if [ -n "$FIXED" ]; then
-            NEW_ENTRY="${NEW_ENTRY}
-
-          ### Fixed
-          ${FIXED}"
+            NEW_ENTRY="${NEW_ENTRY}\n### Fixed\n$FIXED\n"
           fi
           
-          # Insert the new entry after the [Unreleased] section
-          if grep -q "## \[Unreleased\]" CHANGELOG.md; then
-            sed -i "/## \[Unreleased\]/a\\
-          \\
-          ${NEW_ENTRY}" CHANGELOG.md
-          else
-            echo -e "\n${NEW_ENTRY}" >> CHANGELOG.md
+          if [ -n "$SECURITY" ]; then
+            NEW_ENTRY="${NEW_ENTRY}\n### Security\n$SECURITY\n"
           fi
+          
+          if [ -z "$ADDED" ] && [ -z "$CHANGED" ] && [ -z "$FIXED" ] && [ -z "$SECURITY" ] && [ -z "$DEPRECATED" ] && [ -z "$REMOVED" ]; then
+            NEW_ENTRY="${NEW_ENTRY}\n### Changed\n- Release $VERSION\n"
+          fi
+          
+          awk -v new_entry="$NEW_ENTRY" '
+          /^## \[Unreleased\]/ {
+            print
+            while ((getline) > 0 && !/^## \[/) {
+              # Skip unreleased content
+            }
+            print ""
+            printf "%s", new_entry
+            if (!/^## \[/) print
+            next
+          }
+          { print }
+          ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          
+          echo "Updated CHANGELOG.md with Keep a Changelog format"
 
       - name: Commit changelog
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if ! git diff --quiet CHANGELOG.md; then
+          if git diff --quiet CHANGELOG.md; then
+            echo "No changes to CHANGELOG.md"
+          else
+            echo "Committing changelog changes"
             git add CHANGELOG.md
             git commit -m "docs: update changelog for ${{ needs.version.outputs.next_version }} [skip ci]"
             git push origin ${{ github.ref_name }}
+            echo "Changelog committed and pushed"
           fi
 
   # Publish to Hex.pm (conditional)
@@ -474,6 +588,7 @@ jobs:
     if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && vars.PUBLISH_TO_HEX == 'true'
     permissions:
       contents: write
+      packages: write
     environment: 
       name: hex-production
       url: https://hex.pm/packages/${{ github.event.repository.name }}
@@ -499,6 +614,9 @@ jobs:
             deps
             _build
           key: ${{ runner.os }}-mix-publish-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-publish-
+            ${{ runner.os }}-mix-
 
       - name: Install dependencies for publishing
         run: |
@@ -547,13 +665,14 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # Create GitHub release with semantic-release
+  # Create GitHub release with full semantic-release
   release:
     runs-on: ubuntu-22.04
     needs: [version, build-and-test, tag, publish, deploy-docs, changelog]
     if: needs.version.outputs.should_release == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     permissions:
       contents: write
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -630,7 +749,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Workflow summary
+  # Notify on completion
   notify:
     runs-on: ubuntu-22.04
     needs: [version, build-and-test, tag, publish, deploy-docs, changelog, release]
@@ -653,33 +772,4 @@ jobs:
             echo "**Coverage:** ${{ needs.build-and-test.outputs.coverage-report }}%" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ **Build & Test:** Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ needs.deploy-docs.result }}" = "success" ]; then
-            echo "📚 **Documentation:** Deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
-            echo "**URL:** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ github.ref }}" = "refs/heads/master" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "⚠️ **Documentation:** Failed to deploy" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ **Documentation:** Only deployed from main/master branch" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ needs.publish.result }}" = "success" ]; then
-            echo "🚀 **Hex.pm Publication:** Success" >> $GITHUB_STEP_SUMMARY
-            echo "**Package:** https://hex.pm/packages/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.version.outputs.should_release }}" = "true" ]; then
-            echo "⚠️ **Hex.pm Publication:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ **Hex.pm Publication:** Not applicable for this branch/event" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ needs.release.result }}" = "success" ]; then
-            echo "🎉 **GitHub Release:** Created successfully" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.version.outputs.should_release }}" = "true" ]; then
-            echo "⚠️ **GitHub Release:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ **GitHub Release:** Not applicable for this branch/event" >> $GITHUB_STEP_SUMMARY
           fi
