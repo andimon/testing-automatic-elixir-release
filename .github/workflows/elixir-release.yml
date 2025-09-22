@@ -397,16 +397,16 @@ jobs:
           # Create or update CHANGELOG.md
           if [ ! -f CHANGELOG.md ]; then
             cat > CHANGELOG.md << 'EOF'
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-EOF
+          # Changelog
+          
+          All notable changes to this project will be documented in this file.
+          
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+          
+          ## [Unreleased]
+          
+          EOF
           fi
           
           # Get commits since last tag
@@ -425,29 +425,36 @@ EOF
           
           # Create new version entry
           NEW_ENTRY="## [$VERSION] - $DATE"
-          [ -n "$ADDED" ] && NEW_ENTRY+="\n\n### Added\n$ADDED"
-          [ -n "$CHANGED" ] && NEW_ENTRY+="\n\n### Changed\n$CHANGED"
-          [ -n "$FIXED" ] && NEW_ENTRY+="\n\n### Fixed\n$FIXED"
           
-          # If no categorized commits, add generic entry
-          if [ -z "$ADDED" ] && [ -z "$CHANGED" ] && [ -z "$FIXED" ]; then
-            NEW_ENTRY+="\n\n- Release $VERSION"
+          if [ -n "$ADDED" ]; then
+            NEW_ENTRY="${NEW_ENTRY}
+
+          ### Added
+          ${ADDED}"
           fi
           
-          # Insert new version after [Unreleased] section
-          awk -v new_entry="$NEW_ENTRY" '
-          /^## \[Unreleased\]/ {
-            print
-            while ((getline) > 0 && !/^## \[/) {
-              # Skip unreleased content
-            }
-            print ""
-            print new_entry
-            if (!/^## \[/) print
-            next
-          }
-          { print }
-          ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          if [ -n "$CHANGED" ]; then
+            NEW_ENTRY="${NEW_ENTRY}
+
+          ### Changed
+          ${CHANGED}"
+          fi
+          
+          if [ -n "$FIXED" ]; then
+            NEW_ENTRY="${NEW_ENTRY}
+
+          ### Fixed
+          ${FIXED}"
+          fi
+          
+          # Insert the new entry after the [Unreleased] section
+          if grep -q "## \[Unreleased\]" CHANGELOG.md; then
+            sed -i "/## \[Unreleased\]/a\\
+          \\
+          ${NEW_ENTRY}" CHANGELOG.md
+          else
+            echo -e "\n${NEW_ENTRY}" >> CHANGELOG.md
+          fi
 
       - name: Commit changelog
         run: |
